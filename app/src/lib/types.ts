@@ -135,3 +135,19 @@ export interface ParseResult {
   warnings: string[];
   todos: string[];
 }
+
+export interface AiRequest {
+  action: 'explain' | 'troubleshoot';
+  endpoint: Endpoint;
+  spec: Partial<ApiSpec>;
+  error?: {
+    status: number;
+    body: unknown;
+  };
+}
+
+export interface AiResponse {
+  result?: string;
+  error?: string;
+  hint?: string;
+}

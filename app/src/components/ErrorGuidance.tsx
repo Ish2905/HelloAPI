@@ -1,18 +1,130 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import { useApi } from '@/context/ApiContext';
 import { getErrorGuidance } from '@/lib/generators/error-guidance';
+import { AiResponse } from '@/lib/types';
 
-export default function ErrorGuidance() {
-    const { selectedEndpoint } = useApi();
+interface ApiResponse {
+    status: number;
+    statusText: string;
+    headers: Record<string, string>;
+    body: unknown;
+    time: number;
+}
+
+interface ErrorGuidanceProps {
+    response?: ApiResponse | null;
+}
+
+export default function ErrorGuidance({ response }: ErrorGuidanceProps) {
+    const { selectedEndpoint, spec } = useApi();
+
+    // AI Troubleshoot state
+    const [aiTroubleshoot, setAiTroubleshoot] = useState<string | null>(null);
+    const [aiLoading, setAiLoading] = useState(false);
+    const [aiError, setAiError] = useState<string | null>(null);
+
+    const handleAiTroubleshoot = useCallback(async () => {
+        if (!selectedEndpoint || !spec || !response) return;
+
+        setAiLoading(true);
+        setAiError(null);
+
+        try {
+            const res = await fetch('/api/ai', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'troubleshoot',
+                    endpoint: selectedEndpoint,
+                    spec: { title: spec.title, baseUrl: spec.baseUrl, auth: spec.auth, description: spec.description },
+                    error: {
+                        status: response.status,
+                        body: response.body,
+                    },
+                }),
+            });
+
+            const data: AiResponse = await res.json();
+
+            if (!res.ok || data.error) {
+                setAiError(data.error || 'AI troubleshoot failed');
+            } else {
+                setAiTroubleshoot(data.result || '');
+            }
+        } catch {
+            setAiError('Failed to connect to AI service.');
+        } finally {
+            setAiLoading(false);
+        }
+    }, [selectedEndpoint, spec, response]);
 
     if (!selectedEndpoint) return null;
 
     const errors = getErrorGuidance(selectedEndpoint);
+    const hasErrorResponse = response && response.status >= 400;
 
     return (
         <div className="error-guidance">
+            {/* AI Troubleshoot Section — shown when there's an error response */}
+            {hasErrorResponse && (
+                <div className="ai-troubleshoot-section">
+                    <div className="ai-troubleshoot-header">
+                        <span className="ai-troubleshoot-status">
+                            <span className={`error-code code-${Math.floor(response.status / 100)}xx`}>
+                                {response.status}
+                            </span>
+                            <span>{response.statusText}</span>
+                        </span>
+                        <button
+                            className="ai-troubleshoot-button"
+                            onClick={handleAiTroubleshoot}
+                            disabled={aiLoading}
+                        >
+                            {aiLoading ? (
+                                <><span className="spinner" /> Analyzing...</>
+                            ) : (
+                                <>🤖 AI Troubleshoot</>
+                            )}
+                        </button>
+                    </div>
+
+                    {aiLoading && (
+                        <div className="ai-panel ai-troubleshoot-panel">
+                            <div className="ai-panel-body">
+                                <div className="ai-loading">
+                                    <div className="ai-shimmer" />
+                                    <div className="ai-shimmer short" />
+                                    <div className="ai-shimmer" />
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {aiError && (
+                        <div className="ai-panel ai-troubleshoot-panel">
+                            <div className="ai-panel-body">
+                                <div className="ai-error"><span>⚠️</span> {aiError}</div>
+                            </div>
+                        </div>
+                    )}
+
+                    {aiTroubleshoot && (
+                        <div className="ai-panel ai-troubleshoot-panel">
+                            <div className="ai-panel-header">
+                                <span className="ai-panel-icon">🤖</span>
+                                <span className="ai-panel-title">AI Troubleshooting</span>
+                            </div>
+                            <div className="ai-panel-body">
+                                <div className="ai-content" dangerouslySetInnerHTML={{ __html: formatAiMarkdown(aiTroubleshoot) }} />
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Static Error Guidance */}
             <h4 className="error-guidance-title">
                 <span>⚠️</span> Common Errors & Fixes
             </h4>
@@ -39,4 +151,18 @@ export default function ErrorGuidance() {
             </div>
         </div>
     );
+}
+
+// Simple markdown-to-HTML converter for AI responses
+function formatAiMarkdown(text: string): string {
+    return text
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/`(.+?)`/g, '<code>$1</code>')
+        .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+        .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+        .replace(/^# (.+)$/gm, '<h2>$1</h2>')
+        .replace(/^- (.+)$/gm, '<li>$1</li>')
+        .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+        .replace(/\n/g, '<br/>');
 }

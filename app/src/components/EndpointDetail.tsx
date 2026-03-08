@@ -1,11 +1,12 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import ParameterForm from './ParameterForm';
 import ResponseViewer from './ResponseViewer';
 import SnippetGenerator from './SnippetGenerator';
 import ErrorGuidance from './ErrorGuidance';
 import { useApi } from '@/context/ApiContext';
+import { AiResponse } from '@/lib/types';
 
 const METHOD_COLORS: Record<string, string> = {
     GET: '#10b981',
@@ -30,6 +31,12 @@ export default function EndpointDetail() {
     const [activeSection, setActiveSection] = useState<'params' | 'snippets' | 'errors'>('params');
     const [authToken, setAuthToken] = useState('');
     const [isRequesting, setIsRequesting] = useState(false);
+
+    // AI Explain state
+    const [aiExplanation, setAiExplanation] = useState<string | null>(null);
+    const [aiExplainLoading, setAiExplainLoading] = useState(false);
+    const [aiExplainError, setAiExplainError] = useState<string | null>(null);
+    const [showAiExplain, setShowAiExplain] = useState(false);
 
     if (!selectedEndpoint || !spec) {
         return (
@@ -156,6 +163,42 @@ export default function EndpointDetail() {
         }
     };
 
+    // AI Explain handler
+    const handleAiExplain = useCallback(async () => {
+        if (aiExplanation) {
+            setShowAiExplain(!showAiExplain);
+            return;
+        }
+
+        setAiExplainLoading(true);
+        setAiExplainError(null);
+        setShowAiExplain(true);
+
+        try {
+            const res = await fetch('/api/ai', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'explain',
+                    endpoint: ep,
+                    spec: { title: spec.title, baseUrl: spec.baseUrl, auth: spec.auth, description: spec.description },
+                }),
+            });
+
+            const data: AiResponse = await res.json();
+
+            if (!res.ok || data.error) {
+                setAiExplainError(data.error || 'AI request failed');
+            } else {
+                setAiExplanation(data.result || '');
+            }
+        } catch {
+            setAiExplainError('Failed to connect to AI service. Check your network and AWS credentials.');
+        } finally {
+            setAiExplainLoading(false);
+        }
+    }, [ep, spec, aiExplanation, showAiExplain]);
+
     // Determine auth placeholder based on auth type
     const authPlaceholder = (() => {
         switch (spec.auth.type) {
@@ -185,7 +228,46 @@ export default function EndpointDetail() {
                 {ep.description && ep.description !== ep.summary && (
                     <p className="endpoint-description">{ep.description}</p>
                 )}
+                <button
+                    className={`ai-explain-button ${showAiExplain ? 'active' : ''}`}
+                    onClick={handleAiExplain}
+                    disabled={aiExplainLoading}
+                >
+                    {aiExplainLoading ? (
+                        <><span className="spinner" /> Thinking...</>
+                    ) : (
+                        <>✨ AI Explain</>
+                    )}
+                </button>
             </div>
+
+            {/* AI Explanation Panel */}
+            {showAiExplain && (
+                <div className="ai-panel">
+                    <div className="ai-panel-header">
+                        <span className="ai-panel-icon">🤖</span>
+                        <span className="ai-panel-title">AI Explanation</span>
+                        <button className="ai-panel-close" onClick={() => setShowAiExplain(false)}>✕</button>
+                    </div>
+                    <div className="ai-panel-body">
+                        {aiExplainLoading && (
+                            <div className="ai-loading">
+                                <div className="ai-shimmer" />
+                                <div className="ai-shimmer short" />
+                                <div className="ai-shimmer" />
+                            </div>
+                        )}
+                        {aiExplainError && (
+                            <div className="ai-error">
+                                <span>⚠️</span> {aiExplainError}
+                            </div>
+                        )}
+                        {aiExplanation && (
+                            <div className="ai-content" dangerouslySetInnerHTML={{ __html: formatAiMarkdown(aiExplanation) }} />
+                        )}
+                    </div>
+                </div>
+            )}
 
             {/* Auth Token Input */}
             {ep.auth && (
@@ -266,9 +348,23 @@ export default function EndpointDetail() {
                 )}
 
                 {activeSection === 'errors' && (
-                    <ErrorGuidance />
+                    <ErrorGuidance response={response} />
                 )}
             </div>
         </div>
     );
+}
+
+// Simple markdown-to-HTML converter for AI responses
+function formatAiMarkdown(text: string): string {
+    return text
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/`(.+?)`/g, '<code>$1</code>')
+        .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+        .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+        .replace(/^# (.+)$/gm, '<h2>$1</h2>')
+        .replace(/^- (.+)$/gm, '<li>$1</li>')
+        .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+        .replace(/\n/g, '<br/>');
 }
